@@ -11,6 +11,12 @@ return {
             default = nil,
           },
         },
+        {
+          pass_stripped_uri = {
+            type = "boolean",
+            required = false,
+          },
+        },
       },
     }, },
   },
