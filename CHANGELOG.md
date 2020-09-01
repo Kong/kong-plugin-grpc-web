@@ -10,4 +10,4 @@
 causes the plugin to pass the stripped request path (see the `strip_path`
 Route attribute) to the upstream gRPC service.
 
-[0.2.0]: https://github.com/Kong/kong-plugin-grpc-web/compare/0.1.1...0.2.0
+[0.2.0]: https://github.com/Kong/kong-plugin-grpc-web/compare/v0.1.1...v0.2.0
