@@ -11,146 +11,149 @@ local function be_bytes(x)
 end
 
 for _, strategy in helpers.each_strategy() do
+  for buffering_request, buffering_response, buffering_label in helpers.each_buffering() do
+    describe("gRPC-Web Proxying [#" .. strategy .. "](".. buffering_label ..")", function()
+      local proxy_client
+      local proxy_client_ssl
 
-  describe("gRPC-Web Proxying [#" .. strategy .. "]", function()
-    local proxy_client
-    local proxy_client_ssl
+      local HELLO_REQUEST_TEXT_BODY = "AAAAAAYKBGhleWE="
+      local HELLO_REQUEST_BODY = ngx.decode_base64(HELLO_REQUEST_TEXT_BODY)
+      local HELLO_RESPONSE_TEXT_BODY = "AAAAAAwKCmhlbGxvIGhleWE=" ..
+          "gAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo="
+      local HELLO_RESPONSE_BODY = ngx.decode_base64("AAAAAAwKCmhlbGxvIGhleWE=") ..
+          ngx.decode_base64("gAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo=")
 
-    local HELLO_REQUEST_TEXT_BODY = "AAAAAAYKBGhleWE="
-    local HELLO_REQUEST_BODY = ngx.decode_base64(HELLO_REQUEST_TEXT_BODY)
-    local HELLO_RESPONSE_TEXT_BODY = "AAAAAAwKCmhlbGxvIGhleWE=" ..
-        "gAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo="
-    local HELLO_RESPONSE_BODY = ngx.decode_base64("AAAAAAwKCmhlbGxvIGhleWE=") ..
-        ngx.decode_base64("gAAAAB5ncnBjLXN0YXR1czowDQpncnBjLW1lc3NhZ2U6DQo=")
+      lazy_setup(function()
+        local bp = helpers.get_db_utils(strategy, {
+          "routes",
+          "services",
+          "plugins",
+        }, {
+          "grpc-web",
+        })
 
-    lazy_setup(function()
-      local bp = helpers.get_db_utils(strategy, {
-        "routes",
-        "services",
-        "plugins",
-      }, {
-        "grpc-web",
-      })
+        local service1 = assert(bp.services:insert {
+          name = "grpc",
+          url = "grpc://localhost:15002",
+        })
 
-      local service1 = assert(bp.services:insert {
-        name = "grpc",
-        url = "grpc://localhost:15002",
-      })
+        local route1 = assert(bp.routes:insert {
+          protocols = { "http", "https" },
+          paths = { "/" },
+          service = service1,
+          request_buffering = buffering_request,
+          response_buffering = buffering_response,
+        })
 
-      local route1 = assert(bp.routes:insert {
-        protocols = { "http", "https" },
-        paths = { "/" },
-        service = service1,
-      })
+        assert(bp.plugins:insert {
+          route = route1,
+          name = "grpc-web",
+          config = {
+            proto = "spec/fixtures/grpc/hello.proto",
+          },
+        })
 
-      assert(bp.plugins:insert {
-        route = route1,
-        name = "grpc-web",
-        config = {
-          proto = "spec/fixtures/grpc/hello.proto",
-        },
-      })
+        assert(helpers.start_kong {
+          database = strategy,
+          plugins = "bundled,grpc-web",
+        })
+      end)
 
-      assert(helpers.start_kong {
-        database = strategy,
-        plugins = "bundled,grpc-web",
-      })
+      before_each(function()
+        proxy_client = helpers.proxy_client(1000)
+        proxy_client_ssl = helpers.proxy_ssl_client(1000)
+      end)
+
+      lazy_teardown(function()
+        helpers.stop_kong()
+      end)
+
+
+      test("Call gRCP-base64 via HTTP", function()
+        local res, err = proxy_client:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/grpc-web-text",
+            ["Content-Length"] = tostring(#HELLO_REQUEST_TEXT_BODY),
+          },
+          body = HELLO_REQUEST_TEXT_BODY,
+        })
+
+        assert.equal(HELLO_RESPONSE_TEXT_BODY, res:read_body())
+        assert.is_nil(err)
+      end)
+
+      test("Call gRCP-base64 via HTTPS", function()
+        local res, err = proxy_client_ssl:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/grpc-web-text",
+            ["Content-Length"] = tostring(#HELLO_REQUEST_TEXT_BODY),
+          },
+          body = HELLO_REQUEST_TEXT_BODY,
+        })
+
+        assert.equal(HELLO_RESPONSE_TEXT_BODY, res:read_body())
+        assert.is_nil(err)
+      end)
+
+      test("Call binary gRCP via HTTP", function()
+        local res, err = proxy_client:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/grpc-web+proto",
+            ["Content-Length"] = tostring(#HELLO_REQUEST_BODY),
+          },
+          body = HELLO_REQUEST_BODY,
+        })
+
+        assert.equal(HELLO_RESPONSE_BODY, res:read_body())
+        assert.is_nil(err)
+      end)
+
+      test("Call binary gRCP via HTTPS", function()
+        local res, err = proxy_client_ssl:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/grpc-web+proto",
+            ["Content-Length"] = tostring(#HELLO_REQUEST_BODY),
+          },
+          body = HELLO_REQUEST_BODY,
+        })
+
+        assert.equal(HELLO_RESPONSE_BODY, res:read_body())
+        assert.is_nil(err)
+      end)
+
+      test("Call gRPC-Web JSON via HTTP", function()
+        local req = cjson.encode{ greeting = "heya" }
+        req = string.char(0, be_bytes(#req)) .. req
+        local res, err = proxy_client:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/grpc-web+json",
+            ["Content-Length"] = tostring(#req)
+          },
+          body = req,
+        })
+
+        local resp = cjson.encode{ reply = "hello heya" }
+        resp = string.char(0, be_bytes(#resp)) .. resp
+
+        local trailer = "grpc-status:0\r\ngrpc-message:\r\n"
+        trailer = string.char(0x80, be_bytes(#trailer)) .. trailer
+
+        assert.equal(resp .. trailer, res:read_body())
+        assert.is_nil(err)
+      end)
+
+      test("Call plain JSON via HTTP", function()
+        local res, err = proxy_client:post("/hello.HelloService/SayHello", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = cjson.encode{ greeting = "heya" },
+        })
+
+        assert.same({ reply = "hello heya" }, cjson.decode((res:read_body())))
+        assert.is_nil(err)
+      end)
+
     end)
-
-    before_each(function()
-      proxy_client = helpers.proxy_client(1000)
-      proxy_client_ssl = helpers.proxy_ssl_client(1000)
-    end)
-
-    lazy_teardown(function()
-      helpers.stop_kong()
-    end)
-
-
-    test("Call gRCP-base64 via HTTP", function()
-      local res, err = proxy_client:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/grpc-web-text",
-          ["Content-Length"] = tostring(#HELLO_REQUEST_TEXT_BODY),
-        },
-        body = HELLO_REQUEST_TEXT_BODY,
-      })
-
-      assert.equal(HELLO_RESPONSE_TEXT_BODY, res:read_body())
-      assert.is_nil(err)
-    end)
-
-    test("Call gRCP-base64 via HTTPS", function()
-      local res, err = proxy_client_ssl:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/grpc-web-text",
-          ["Content-Length"] = tostring(#HELLO_REQUEST_TEXT_BODY),
-        },
-        body = HELLO_REQUEST_TEXT_BODY,
-      })
-
-      assert.equal(HELLO_RESPONSE_TEXT_BODY, res:read_body())
-      assert.is_nil(err)
-    end)
-
-    test("Call binary gRCP via HTTP", function()
-      local res, err = proxy_client:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/grpc-web+proto",
-          ["Content-Length"] = tostring(#HELLO_REQUEST_BODY),
-        },
-        body = HELLO_REQUEST_BODY,
-      })
-
-      assert.equal(HELLO_RESPONSE_BODY, res:read_body())
-      assert.is_nil(err)
-    end)
-
-    test("Call binary gRCP via HTTPS", function()
-      local res, err = proxy_client_ssl:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/grpc-web+proto",
-          ["Content-Length"] = tostring(#HELLO_REQUEST_BODY),
-        },
-        body = HELLO_REQUEST_BODY,
-      })
-
-      assert.equal(HELLO_RESPONSE_BODY, res:read_body())
-      assert.is_nil(err)
-    end)
-
-    test("Call gRPC-Web JSON via HTTP", function()
-      local req = cjson.encode{ greeting = "heya" }
-      req = string.char(0, be_bytes(#req)) .. req
-      local res, err = proxy_client:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/grpc-web+json",
-          ["Content-Length"] = tostring(#req)
-        },
-        body = req,
-      })
-
-      local resp = cjson.encode{ reply = "hello heya" }
-      resp = string.char(0, be_bytes(#resp)) .. resp
-
-      local trailer = "grpc-status:0\r\ngrpc-message:\r\n"
-      trailer = string.char(0x80, be_bytes(#trailer)) .. trailer
-
-      assert.equal(resp .. trailer, res:read_body())
-      assert.is_nil(err)
-    end)
-
-     test("Call plain JSON via HTTP", function()
-      local res, err = proxy_client:post("/hello.HelloService/SayHello", {
-        headers = {
-          ["Content-Type"] = "application/json",
-        },
-        body = cjson.encode{ greeting = "heya" },
-      })
-
-      assert.same({ reply = "hello heya" }, cjson.decode((res:read_body())))
-      assert.is_nil(err)
-    end)
-
- end)
+  end
 end
