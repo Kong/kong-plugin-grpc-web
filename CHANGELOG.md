@@ -1,6 +1,13 @@
 # Table of Contents
 
+- [0.2.1](#021)
 - [0.2.0](#020)
+
+##  [0.2.1]
+
+> Released 2020/11/18
+
+- Prevent `lua_pack` from leaking to `string`
 
 ##  [0.2.0]
 
@@ -10,4 +17,6 @@
 causes the plugin to pass the stripped request path (see the `strip_path`
 Route attribute) to the upstream gRPC service.
 
+
+[0.2.1]: https://github.com/Kong/kong-plugin-grpc-web/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Kong/kong-plugin-grpc-web/compare/v0.1.1...v0.2.0
