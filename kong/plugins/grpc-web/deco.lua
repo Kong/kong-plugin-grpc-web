@@ -1,14 +1,22 @@
 -- Copyright (c) Kong Inc. 2020
 
-require"lua_pack"
+local bpack, bunpack
+do
+  local string_pack = string.pack     -- luacheck: ignore
+  local string_unpack = string.unpack -- luacheck: ignore
+  package.loaded.lua_pack = nil
+  require "lua_pack"
+  bpack = string.pack                 -- luacheck: ignore
+  bunpack = string.unpack             -- luacheck: ignore
+  string.unpack = string_unpack       -- luacheck: ignore
+  string.pack = string_pack           -- luacheck: ignore
+end
+
 local cjson = require "cjson"
 local protoc = require "protoc"
 local pb = require "pb"
 
 local setmetatable = setmetatable
-
-local bpack=string.pack         -- luacheck: ignore string
-local bunpack=string.unpack     -- luacheck: ignore string
 
 local ngx = ngx
 local decode_base64 = ngx.decode_base64
